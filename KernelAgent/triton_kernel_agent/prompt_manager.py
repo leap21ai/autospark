@@ -365,7 +365,14 @@ Respond with JSON containing:
             Rendered guidelines string
         """
         template = self.templates["triton_guidelines"]
-        return template.render()
+        # Inject GPU-specific constraints if the platform has guidance
+        gpu_constraints = None
+        if self.target_platform.guidance_block:
+            gpu_constraints = {
+                "gpu_name": self.target_platform.name,
+                "text": self.target_platform.guidance_block,
+            }
+        return template.render(gpu_constraints=gpu_constraints)
 
     def get_template(self, template_name: str) -> Template:
         """

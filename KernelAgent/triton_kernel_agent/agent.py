@@ -87,10 +87,11 @@ class TritonKernelAgent:
             self.log_dir = Path.cwd() / "triton_kernel_logs"
         self.log_dir.mkdir(exist_ok=True, parents=True)
 
-        # Normalize to PlatformConfig
-        self._platform_config = (
-            target_platform if target_platform else get_platform("cuda")
-        )
+        # Normalize to PlatformConfig — auto-detect GB10 for SM121-specific guidance
+        if target_platform:
+            self._platform_config = target_platform
+        else:
+            self._platform_config = self._auto_detect_platform()
         self.no_cusolver = no_cusolver
         self.test_timeout_s = test_timeout_s
 
@@ -98,7 +99,7 @@ class TritonKernelAgent:
         self._setup_logging()
 
         # Initialize prompt manager
-        self.prompt_manager = PromptManager(target_platform=target_platform)
+        self.prompt_manager = PromptManager(target_platform=self._platform_config)
 
         # Initialize worker manager
         self.manager = WorkerManager(
@@ -112,6 +113,23 @@ class TritonKernelAgent:
             no_cusolver=self.no_cusolver,
             test_timeout_s=self.test_timeout_s,
         )
+
+    @staticmethod
+    def _auto_detect_platform() -> PlatformConfig:
+        """Auto-detect GPU and return appropriate platform config.
+
+        Returns cuda_gb10 for DGX Spark (NVIDIA GB10, SM121), otherwise cuda.
+        """
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+                if "GB10" in gpu_name:
+                    return get_platform("cuda_gb10")
+        except Exception:
+            pass
+        return get_platform("cuda")
 
     def _setup_logging(self):
         """Setup agent logging."""

@@ -65,6 +65,66 @@ You are generating a Triton kernel for Intel XPU (Xe GPUs). Follow these guideli
 4. **Optimal Block Sizes**: Start with 128-256 for most kernels
 5. **Data Types**: Intel supports fp32, fp16, bf16 (fp8 varies by generation)"""
 
+_GB10_KERNEL_GUIDANCE = """\
+## NVIDIA GB10 (DGX Spark) — SM121 Hardware Constraints
+
+You are generating a Triton kernel for the NVIDIA GB10 (DGX Spark, compute capability 12.1).
+This GPU uses SM121 which is architecturally different from datacenter Blackwell (SM100).
+
+**CRITICAL CONSTRAINTS — violating these will cause silent failures or crashes:**
+
+1. **Shared memory: 128 KB per SM** (NOT 228 KB like datacenter Blackwell)
+   - For matmul: BLOCK_M * BLOCK_K + BLOCK_K * BLOCK_N must fit in 128 KB
+   - Safe autotune configs: max BLOCK_M=128, BLOCK_N=128, BLOCK_K=64
+   - DO NOT use BLOCK_M=128 + BLOCK_N=256 combos (exceeds shared memory)
+
+2. **No WGMMA** — SM121 uses Ampere-era `mma.sync` with registers, NOT datacenter Blackwell `tcgen05`
+   - Warp specialization (`warp_specialize=True`) may not work — avoid unless tested
+   - Persistent kernel patterns from H100 examples may fail
+
+3. **No FlashAttention** — FA2/FA4 kernels are sm80-sm100 only
+   - Use SDPA-style attention or manual online softmax instead
+   - Do NOT use `from triton.tools.tensor_descriptor import TensorDescriptor` (TMA not available)
+
+4. **No TMEM (Tensor Memory)** — 0 KB vs 256 KB on datacenter Blackwell
+
+5. **Memory: 128 GB unified LPDDR5x** (CPU+GPU share same pool, 273 GB/s bandwidth)
+   - Memory-bound kernels are common — optimize for bandwidth, not compute
+   - No HBM — bandwidth is ~12x lower than H100
+
+6. **Accumulation precision**: Always accumulate in FP32 for matmul/reductions
+   - Use `tl.dot(a, b, acc, input_precision="ieee")` for BF16 matmul accuracy
+   - Cast to output dtype only at the final store
+
+7. **Autotune configs for SM121:**
+   ```python
+   @triton.autotune(
+       configs=[
+           triton.Config({"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_K": 64}, num_stages=3, num_warps=4),
+           triton.Config({"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_K": 32}, num_stages=4, num_warps=4),
+           triton.Config({"BLOCK_M": 64, "BLOCK_N": 128, "BLOCK_K": 32}, num_stages=3, num_warps=4),
+           triton.Config({"BLOCK_M": 128, "BLOCK_N": 64, "BLOCK_K": 32}, num_stages=3, num_warps=4),
+           triton.Config({"BLOCK_M": 32, "BLOCK_N": 32, "BLOCK_K": 64}, num_stages=4, num_warps=2),
+       ],
+       key=[...],
+   )
+   ```
+
+8. **48 SMs** — fewer than H100 (132) or A100 (108). Persistent kernels need smaller grid sizes.
+"""
+
+_GB10_CONSTRAINTS_TEXT = """\
+   - GPU: NVIDIA GB10 (DGX Spark), compute capability 12.1 (SM121)
+   - Shared memory per SM: 128 KB (NOT 228 KB like datacenter Blackwell)
+   - NO WGMMA, NO TMEM, NO TMA tensor descriptors, NO FlashAttention
+   - Uses Ampere-era mma.sync — treat like an Ampere GPU with newer numeric formats
+   - Max safe autotune tile: BLOCK_M=128, BLOCK_N=128, BLOCK_K=64
+   - Unified memory: 128 GB LPDDR5x at 273 GB/s (12x lower bandwidth than H100 HBM3)
+   - 48 SMs, 192 tensor cores (5th gen), 6144 CUDA cores
+   - Always accumulate in FP32; use input_precision="ieee" for tl.dot with BF16
+   - Avoid warp_specialize=True and persistent kernel patterns from H100 examples
+"""
+
 _XPU_CUDA_HACKS = (
     "torch.cuda.is_available = lambda: True",
     "_orig_torch_device = torch.device",
@@ -83,6 +143,13 @@ PLATFORMS: dict[str, PlatformConfig] = {
         device_string="cuda",
         guidance_block="",
         kernel_guidance="",
+        cuda_hacks_to_strip=(),
+    ),
+    "cuda_gb10": PlatformConfig(
+        name="cuda_gb10",
+        device_string="cuda",
+        guidance_block=_GB10_CONSTRAINTS_TEXT,
+        kernel_guidance=_GB10_KERNEL_GUIDANCE,
         cuda_hacks_to_strip=(),
     ),
     "xpu": PlatformConfig(

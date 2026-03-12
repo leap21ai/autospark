@@ -68,6 +68,11 @@ TRITON KERNEL PROGRAMMING GUIDELINES:
    - Multi-stage pipelines with num_stages
    - Warp specialization with warp_specialize parameter
 
+{% if gpu_constraints %}
+8. HARDWARE-SPECIFIC CONSTRAINTS ({{ gpu_constraints.gpu_name }}):
+{{ gpu_constraints.text }}
+{% endif %}
+
 7. RUNTIME CONSTRAINTS:
    - Wrappers: validate/allocate/launch only; no math.
    - All compute runs in Triton kernels; no torch.nn, torch.nn.functional (e.g., F.*), or other PyTorch compute ops, including general tensor-tensor math like torch.matmul/mm/bmm/einsum or their Tensor method forms, and no low-level torch.ops.aten.* calls (e.g., torch.ops.aten.conv2d, torch.ops.aten.layer_norm, torch.ops.aten.addmm, torch.ops.aten.mean).
