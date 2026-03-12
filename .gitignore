@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+.fuse/
+.optimize/
+triton_kernel_logs/
+*.gguf
